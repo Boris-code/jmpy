@@ -14,8 +14,17 @@ import sys
 import tempfile
 from distutils.core import setup
 from typing import Union, List
-
+from log import logger
 from Cython.Build import cythonize
+from distutils.command.build_py import build_py
+
+
+def get_package_dir(*args, **kwargs):
+    return ""
+
+
+# 重写get_package_dir， 否者生成的so文件路径有问题
+build_py.get_package_dir = get_package_dir
 
 
 class TemporaryDirectory(object):
@@ -27,39 +36,13 @@ class TemporaryDirectory(object):
         shutil.rmtree(self.name)
 
 
-_regexs = {}
+def search(content, regexs):
+    if isinstance(regexs, str):
+        return re.search(regexs, content)
 
-
-def find_msg(text, regexs, allow_repeat=False, fetch_one=False, split=None):
-    regexs = isinstance(regexs, str) and [regexs] or regexs
-
-    infos = []
     for regex in regexs:
-        if regex == "":
-            continue
-
-        if regex not in _regexs.keys():
-            _regexs[regex] = re.compile(regex, re.S)
-
-        if fetch_one:
-            infos = _regexs[regex].search(text)
-            if infos:
-                infos = infos.groups()
-            else:
-                continue
-        else:
-            infos = _regexs[regex].findall(str(text))
-
-        if len(infos) > 0:
-            break
-
-    if fetch_one:
-        infos = infos if infos else ("",)
-        return infos if len(infos) > 1 else infos[0]
-    else:
-        infos = allow_repeat and infos or sorted(set(infos), key=infos.index)
-        infos = split.join(infos) if split else infos
-        return infos
+        if re.search(regex, content):
+            return True
 
 
 def walk_file(file_path):
@@ -79,9 +62,9 @@ def copy_files(src_path, dst_path):
             shutil.rmtree(dst_path)
 
         def callable(src, names: list):
-            if find_msg(src, dst_path):
+            if search(src, dst_path):
                 return names
-            return ["dist", ".git", "venv", ".idea"]
+            return ["dist", ".git", "venv", ".idea", "__pycache__"]
 
         shutil.copytree(src_path, dst_path, ignore=callable)
     else:
@@ -99,7 +82,7 @@ def get_py_files(files, ignore_files: Union[List, str, None] = None):
     """
     for file in files:
         if file.endswith(".py"):
-            if ignore_files and find_msg(file, regexs=ignore_files):  # 该文件是忽略的文件
+            if ignore_files and search(file, regexs=ignore_files):  # 该文件是忽略的文件
                 pass
             else:
                 yield file
@@ -107,7 +90,7 @@ def get_py_files(files, ignore_files: Union[List, str, None] = None):
 
 def filter_cannot_encrypted_py(files):
     """
-    过滤掉不能加密的文件，如 __init__.py __main__.py 以及包含 if __name__ == "__main__": 的文件
+    过滤掉不能加密的文件，如 log.py __main__.py 以及包含 if __name__ == "__main__": 的文件
     Args:
         files:
 
@@ -116,12 +99,12 @@ def filter_cannot_encrypted_py(files):
     """
     _files = []
     for file in files:
-        if find_msg(file, regexs=["__init__.py", "__main__.py"]):
+        if search(file, regexs="__.*?.py"):
             continue
 
         with open(file, "r", encoding="utf-8") as f:
             content = f.read()
-            if find_msg(content, regexs=['if __name__ == "__main__":']):
+            if search(content, regexs="__main__"):
                 continue
 
         _files.append(file)
@@ -130,22 +113,32 @@ def filter_cannot_encrypted_py(files):
 
 
 def encrypt_py(py_files: list):
+    encrypted_py = []
 
     with TemporaryDirectory() as td:
-        for py_file in py_files:
-            dir_name = os.path.dirname(py_file)
-            file_name = os.path.basename(py_file)
+        total_count = len(py_files)
+        for i, py_file in enumerate(py_files):
+            try:
+                dir_name = os.path.dirname(py_file)
+                file_name = os.path.basename(py_file)
 
-            os.chdir(dir_name)
+                os.chdir(dir_name)
 
-            print("正在加密 ", file_name)
+                logger.debug("正在加密 {}/{},  {}".format(i + 1, total_count, py_file))
 
-            setup(
-                ext_modules=cythonize([file_name]),
-                script_args=["build_ext", "--inplace", "-t", td],
-            )
+                setup(
+                    ext_modules=cythonize([file_name], quiet=True, language_level=3),
+                    script_args=["build_ext", "-t", td, "--inplace"],
+                )
 
-            print("-" * 40 + "\n")
+                encrypted_py.append(py_file)
+                logger.debug("加密成功 {}".format(py_file))
+
+            except Exception as e:
+                logger.exception("加密失败 {} , error {}".format(py_file, e))
+                os.remove(py_file.replace(".py", ".c"))
+
+        return encrypted_py
 
 
 def delete_files(files_path):
@@ -179,7 +172,13 @@ def start_encrypt(
     output_file_path: str = None,
     ignore_files: Union[List, str, None] = None,
 ):
-    if output_file_path and not os.path.isdir(output_file_path):
+    assert input_file_path, "input_file_path cannot be null"
+
+    assert (
+        input_file_path != output_file_path
+    ), "output_file_path must be diffent with input_file_path"
+
+    if output_file_path and os.path.isfile(output_file_path):
         raise ValueError("output_file_path need a dir path")
 
     input_file_path = os.path.abspath(input_file_path)
@@ -193,7 +192,7 @@ def start_encrypt(
         else:
             output_file_path = os.path.join(os.path.dirname(input_file_path), "dist")
     else:
-        output_file_path = os.path.abspath(input_file_path)
+        output_file_path = os.path.abspath(output_file_path)
 
     # 拷贝原文件到目标文件
     copy_files(input_file_path, output_file_path)
@@ -204,12 +203,16 @@ def start_encrypt(
     # 过滤掉不需要加密的文件，__int__.py 及 包含 if __name__ == "__main__": 的文件不加密
     need_encrypted_py = filter_cannot_encrypted_py(py_files)
 
-    encrypt_py(need_encrypted_py)
+    encrypted_py = encrypt_py(need_encrypted_py)
 
-    delete_files(need_encrypted_py)
+    delete_files(encrypted_py)
     rename_excrypted_file(output_file_path)
 
-    print("加密完成 生成到 %s" % output_file_path)
+    logger.debug(
+        "加密完成 total_count={}, success_count={}, 生成到 {}".format(
+            len(need_encrypted_py), len(encrypted_py), output_file_path
+        )
+    )
 
 
 def usage():
@@ -231,8 +234,6 @@ if __name__ == "__main__":
 
     input_file_path = output_file_path = ignore_files = ""
 
-    # print(input_file_path, output_file_path)
-
     for name, value in options:
         if name in ("-h", "--help"):
             print(usage.__doc__)
@@ -248,7 +249,7 @@ if __name__ == "__main__":
             output_file_path = value
 
     if not input_file_path:
-        print(usage.__doc__)
+        logger.debug(usage.__doc__)
         sys.exit()
 
     start_encrypt(input_file_path, output_file_path, ignore_files)
