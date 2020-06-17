@@ -1,3 +1,7 @@
 .idea/
 venv/
 __pycache__/
+dist/
+encrypt_py.egg-info/
+build/
+jmpy3.egg-info/
