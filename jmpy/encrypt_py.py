@@ -165,8 +165,8 @@ def delete_files(files_path):
 def rename_excrypted_file(output_file_path):
     files = walk_file(output_file_path)
     for file in files:
-        if ".cpython-" in file:
-            new_filename = re.sub(r"cpython-.+\.", "", file)
+        if file.endswith(".pyd") or file.endswith(".so"):
+            new_filename = re.sub("(.*)\..*\.(.*)", r"\1.\2", file)
             os.rename(file, new_filename)
 
 
