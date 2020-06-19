@@ -90,7 +90,7 @@ def get_py_files(files, ignore_files: Union[List, str, None] = None):
                 yield file
 
 
-def filter_cannot_encrypted_py(files):
+def filter_cannot_encrypted_py(files, except_main_file):
     """
     过滤掉不能加密的文件，如 log.py __main__.py 以及包含 if __name__ == "__main__": 的文件
     Args:
@@ -104,10 +104,11 @@ def filter_cannot_encrypted_py(files):
         if search(file, regexs="__.*?.py"):
             continue
 
-        with open(file, "r", encoding="utf-8") as f:
-            content = f.read()
-            if search(content, regexs="__main__"):
-                continue
+        if except_main_file:
+            with open(file, "r", encoding="utf-8") as f:
+                content = f.read()
+                if search(content, regexs="__main__"):
+                    continue
 
         _files.append(file)
 
@@ -126,7 +127,7 @@ def encrypt_py(py_files: list):
 
                 os.chdir(dir_name)
 
-                logger.debug("正在加密 {}/{},  {}".format(i + 1, total_count, py_file))
+                logger.debug("正在加密 {}/{},  {}".format(i + 1, total_count, file_name))
 
                 setup(
                     ext_modules=cythonize([file_name], quiet=True, language_level=3),
@@ -134,7 +135,7 @@ def encrypt_py(py_files: list):
                 )
 
                 encrypted_py.append(py_file)
-                logger.debug("加密成功 {}".format(py_file))
+                logger.debug("加密成功 {}".format(file_name))
 
             except Exception as e:
                 logger.exception("加密失败 {} , error {}".format(py_file, e))
@@ -173,6 +174,7 @@ def start_encrypt(
     input_file_path,
     output_file_path: str = None,
     ignore_files: Union[List, str, None] = None,
+    except_main_file: int = 1,
 ):
     assert input_file_path, "input_file_path cannot be null"
 
@@ -202,8 +204,8 @@ def start_encrypt(
     files = walk_file(output_file_path)
     py_files = get_py_files(files, ignore_files)
 
-    # 过滤掉不需要加密的文件，__int__.py 及 包含 if __name__ == "__main__": 的文件不加密
-    need_encrypted_py = filter_cannot_encrypted_py(py_files)
+    # 过滤掉不需要加密的文件
+    need_encrypted_py = filter_cannot_encrypted_py(py_files, except_main_file)
 
     encrypted_py = encrypt_py(need_encrypted_py)
 
