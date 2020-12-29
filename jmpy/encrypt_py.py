@@ -141,7 +141,7 @@ def encrypt_py(py_files: list):
                 logger.exception("加密失败 {} , error {}".format(py_file, e))
                 temp_c = py_file.replace(".py", ".c")
                 if os.path.exists(temp_c):
-                    os.remove()
+                    os.remove(temp_c)
 
         return encrypted_py
 
